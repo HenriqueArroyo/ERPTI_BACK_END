@@ -30,16 +30,28 @@ public class CanalController {
     @PostMapping("/criar")
     public ResponseEntity<?> criarCanal(@RequestBody CriarCanalDTO dto) {
         try {
+            // Se for chat 1:1, verifica se já existe canal privado entre os dois antes de criar outro
+            if ("PRIVADO".equalsIgnoreCase(dto.tipo()) && dto.usuarioIds().size() == 2) {
+                var idsIterator = dto.usuarioIds().iterator();
+                Long user1 = idsIterator.next();
+                Long user2 = idsIterator.next();
+
+                var canalExistente = canalRepo.findChatPrivado(user1, user2);
+                if (canalExistente.isPresent()) {
+                    return ResponseEntity.ok(canalExistente.get());
+                }
+            }
+
             CanalComunicacao canal = new CanalComunicacao();
             canal.setNome(dto.nome());
             canal.setTipo(com.engebag.gestaoti.model.TipoCanal.valueOf(dto.tipo()));
-            
+
             Set<User> participantes = new HashSet<>();
             for (Long id : dto.usuarioIds()) {
                 userRepo.findById(id).ifPresent(participantes::add);
             }
             canal.setParticipantes(participantes);
-            
+
             canalRepo.save(canal);
 
             for (User usuario : participantes) {
@@ -53,16 +65,6 @@ public class CanalController {
             return ResponseEntity.ok(canal);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("Erro ao processar criação de canal: " + e.getMessage());
-        }
-    }
-
-    @GetMapping
-    public ResponseEntity<List<CanalComunicacao>> listarCanaisDoUsuario(@RequestParam Long usuarioId) {
-        try {
-            List<CanalComunicacao> canais = canalRepo.findByParticipanteId(usuarioId);
-            return ResponseEntity.ok(canais);
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().build();
         }
     }
 }
