@@ -67,4 +67,14 @@ public class CanalController {
             return ResponseEntity.badRequest().body("Erro ao processar criação de canal: " + e.getMessage());
         }
     }
+
+        @GetMapping
+    public ResponseEntity<List<CanalComunicacao>> listarCanais(
+            @RequestParam Long usuarioId) {
+
+        return ResponseEntity.ok(
+                canalRepo.findByParticipanteId(usuarioId)
+        );
+
+    }
 }
