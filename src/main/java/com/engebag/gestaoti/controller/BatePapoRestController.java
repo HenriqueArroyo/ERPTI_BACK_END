@@ -1,37 +1,46 @@
 package com.engebag.gestaoti.controller;
 
-import com.engebag.gestaoti.dto.MensagemRetornoDTO;
+import com.engebag.gestaoti.model.MensagemComunicacao;
 import com.engebag.gestaoti.repository.MensagemComunicacaoRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import com.engebag.gestaoti.dto.UsuarioResumoDTO;
 
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Map;
+import java.util.HashMap;
 
 @RestController
-@RequestMapping("/api/batepapo")
+@RequestMapping("/api/bate-papo")
 public class BatePapoRestController {
 
     @Autowired
-    private MensagemComunicacaoRepository mensagemRepo; // O nome injetado aqui é MENSAGEM
+    private MensagemComunicacaoRepository mensagemRepo;
 
-    @GetMapping("/historico/{canalId}")
-    public ResponseEntity<List<MensagemRetornoDTO>> carregarHistorico(@PathVariable Long canalId) {
-        // Alterado de messageRepo para mensagemRepo na linha abaixo:
-        var mensagens = mensagemRepo.findByCanalIdOrderByEnviadoEmAsc(canalId);
+    @GetMapping("/canal/{canalId}/mensagens")
+    public ResponseEntity<List<MensagemComunicacao>> carregarHistorico(@PathVariable Long canalId) {
+        List<MensagemComunicacao> historico = mensagemRepo.findByCanalIdOrderByEnviadoEmAsc(canalId);
+        return ResponseEntity.ok(historico);
+    }
 
-        List<MensagemRetornoDTO> dtos = mensagens.stream().map(msg -> {
-            MensagemRetornoDTO dto = new MensagemRetornoDTO();
-            dto.setId(msg.getId());
-            dto.setCanalId(msg.getCanal().getId());
-            dto.setConteudo(msg.getConteudo());
-            dto.setEnviadoEm(msg.getEnviadoEm());
-            dto.setRemetente(new UsuarioResumoDTO(msg.getRemetente()));
-            return dto;
-        }).collect(Collectors.toList());
+    @PostMapping("/canal/marcar-lidas")
+    public ResponseEntity<Map<String, Object>> confirmarLeituraGeral(@RequestBody Map<String, Long> payload) {
+        Map<String, Object> resposta = new HashMap<>();
+        resposta.put("sucesso", true);
+        resposta.put("mensagem", "Mensagens processadas com sucesso.");
+        return ResponseEntity.ok(resposta);
+    }
 
-        return ResponseEntity.ok(dtos);
+    @GetMapping("/nao-lidas/{usuarioId}")
+    public ResponseEntity<Map<Long, Long>> contarNaoLidas(@PathVariable Long usuarioId) {
+        // Para cada canal do usuário, conta mensagens de outros remetentes sem registro em mensagem_leituras
+        var resultado = mensagemRepo.contarNaoLidasPorCanal(usuarioId);
+        
+        // resultado: List<Object[]>{ canalId, quantidade } convertido para Map<canalId, quantidade>
+        Map<Long, Long> mapa = new HashMap<>();
+        for (Object[] linha : resultado) {
+            mapa.put((Long) linha[0], (Long) linha[1]);
+        }
+        return ResponseEntity.ok(mapa);
     }
 }

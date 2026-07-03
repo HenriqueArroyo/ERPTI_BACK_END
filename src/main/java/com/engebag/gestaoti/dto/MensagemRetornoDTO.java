@@ -1,12 +1,10 @@
 package com.engebag.gestaoti.dto;
 
-import java.time.LocalDateTime;
-
 public class MensagemRetornoDTO {
     private Long id;
     private Long canalId;
     private String conteudo;
-    private LocalDateTime enviadoEm;
+    private String enviadoEm; 
     private UsuarioResumoDTO remetente;
 
     public Long getId() {
@@ -33,11 +31,11 @@ public class MensagemRetornoDTO {
         this.conteudo = conteudo;
     }
 
-    public LocalDateTime getEnviadoEm() {
+    public String getEnviadoEm() {
         return enviadoEm;
     }
 
-    public void setEnviadoEm(LocalDateTime enviadoEm) {
+    public void setEnviadoEm(String enviadoEm) {
         this.enviadoEm = enviadoEm;
     }
 

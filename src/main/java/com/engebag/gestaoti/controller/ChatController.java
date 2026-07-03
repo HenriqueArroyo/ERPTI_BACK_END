@@ -1,62 +1,82 @@
 package com.engebag.gestaoti.controller;
 
 import com.engebag.gestaoti.dto.MensagemRequestDTO;
-import com.engebag.gestaoti.dto.MensagemResponseDTO;
-import com.engebag.gestaoti.model.MensagemChamado;
+import com.engebag.gestaoti.dto.MensagemRetornoDTO;
+import com.engebag.gestaoti.dto.UsuarioResumoDTO;
+import com.engebag.gestaoti.model.MensagemComunicacao;
+import com.engebag.gestaoti.model.CanalComunicacao;
 import com.engebag.gestaoti.model.User;
-import com.engebag.gestaoti.repository.ChamadoRepository;
-import com.engebag.gestaoti.repository.MensagemChamadoRepository;
+import com.engebag.gestaoti.repository.MensagemComunicacaoRepository;
+import com.engebag.gestaoti.repository.CanalComunicacaoRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.SendTo;
-import org.springframework.security.core.Authentication;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.stereotype.Controller;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.security.Principal;
 
 @Controller
 public class ChatController {
 
     @Autowired
-    private MensagemChamadoRepository mensagemRepository;
+    private MensagemComunicacaoRepository mensagemRepository;
 
     @Autowired
-    private ChamadoRepository chamadoRepository;
+    private CanalComunicacaoRepository canalRepository;
 
-    // Recebe mensagens em /app/chamado/{id}/enviar
     @MessageMapping("/chamado/{idChamado}/enviar")
-    // Distribui para todos que estão inscritos em /topic/chamado/{id}
     @SendTo("/topic/chamado/{idChamado}")
-    public MensagemResponseDTO processMessage(@DestinationVariable Long idChamado, MensagemRequestDTO dto, Authentication authentication) {
+    public MensagemRetornoDTO processMessage(@DestinationVariable("idChamado") Long canalId, MensagemRequestDTO dto, SimpMessageHeaderAccessor headerAccessor) {
         
-        // O usuário foi injetado pelo nosso ChannelInterceptor no momento do CONNECT
-        User remetente = (User) authentication.getPrincipal();
-
-        var chamadoOpt = chamadoRepository.findById(idChamado);
-        if (chamadoOpt.isEmpty()) {
-            throw new RuntimeException("Chamado não encontrado");
+        // 1. Recupera o usuário autenticado do WebSocket
+        Principal principal = headerAccessor.getUser();
+        if (principal == null) {
+            throw new RuntimeException("Usuário não autenticado no barramento WebSocket.");
         }
 
-        // Salva a mensagem no banco de dados
-        MensagemChamado mensagem = new MensagemChamado();
-        mensagem.setChamado(chamadoOpt.get());
-        mensagem.setUsuario(remetente);
-        mensagem.setMensagem(dto.mensagem());
-        mensagem.setTipoMensagem("TEXTO");
-        
-        // Salvamos e já forçamos a data no objeto para não retornar nulo para o frontend agora
-        mensagemRepository.save(mensagem); 
-        String dataEnvioStr = LocalDateTime.now().toString();
+        UsernamePasswordAuthenticationToken authToken = (UsernamePasswordAuthenticationToken) principal;
+        User remetente = (User) authToken.getPrincipal();
 
-     return new MensagemResponseDTO(
-                mensagem.getId(),
-                remetente.getNome(),
-                mensagem.getMensagem(),
-                dataEnvioStr,
-                mensagem.getTipoMensagem(),
-                null, // Sem arquivo
-                null  // Sem arquivo
-        );
+        // 2. Busca o Canal de Comunicação correto
+        CanalComunicacao canal = canalRepository.findById(canalId)
+                .orElseThrow(() -> new RuntimeException("Canal de bate-papo não encontrado com o ID: " + canalId));
+
+        // 3. Validação do conteúdo
+        String textoReal = null;
+        if (dto != null && dto.mensagem() != null && !dto.mensagem().trim().isEmpty()) {
+            textoReal = dto.mensagem();
+        } else {
+            textoReal = "Erro: Chave de texto incorreta no JSON do Front-end";
+        }
+
+        // 4. Cria e persiste a entidade
+        MensagemComunicacao mensagem = new MensagemComunicacao();
+        mensagem.setCanal(canal);
+        mensagem.setRemetente(remetente);
+        mensagem.setConteudo(textoReal);
+        mensagem.setEnviadoEm(LocalDateTime.now());
+
+        mensagemRepository.save(mensagem);
+
+        // 5. Formata a data para String ISO para o Frontend não quebrar
+        String dataFormatada = mensagem.getEnviadoEm().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+
+        // 6. Prepara o remetente usando o construtor que aceita a entidade User diretamente
+        UsuarioResumoDTO usuarioResumo = new UsuarioResumoDTO(remetente);
+
+        // 7. Monta o retorno exato
+        MensagemRetornoDTO retorno = new MensagemRetornoDTO();
+        retorno.setId(mensagem.getId());
+        retorno.setCanalId(canal.getId());
+        retorno.setConteudo(mensagem.getConteudo());
+        retorno.setEnviadoEm(dataFormatada);
+        retorno.setRemetente(usuarioResumo);
+
+        return retorno;
     }
 }

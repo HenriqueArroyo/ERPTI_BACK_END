@@ -4,6 +4,8 @@ import com.engebag.gestaoti.dto.NotificacaoResponseDTO;
 import com.engebag.gestaoti.model.Chamado;
 import com.engebag.gestaoti.model.Notificacao;
 import com.engebag.gestaoti.model.User;
+import com.engebag.gestaoti.model.CanalComunicacao;
+import com.engebag.gestaoti.model.MensagemComunicacao;
 import com.engebag.gestaoti.repository.NotificacaoRepository;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
@@ -41,7 +43,6 @@ public class NotificacaoService {
         Notificacao n = notificacaoRepository.findById(notificacaoId)
                 .orElseThrow(() -> new RuntimeException("Notificação não encontrada"));
 
-        // Apenas o dono ou notificações gerais podem ser marcadas por qualquer usuário
         if (!n.getGeral() && !n.getUsuario().getId().equals(usuarioId)) {
             throw new RuntimeException("Acesso negado a esta notificação");
         }
@@ -52,15 +53,6 @@ public class NotificacaoService {
 
     // ── Criação + envio via WebSocket ─────────────────────────────────────────
 
-    /**
-     * Cria uma notificação pessoal para um usuário específico e envia via STOMP
-     * usando fila privada (/user/queue/notificacoes → convertAndSendToUser).
-     *
-     * @param usuario   destinatário
-     * @param chamado   chamado relacionado (pode ser null)
-     * @param titulo    título da notificação
-     * @param mensagem  corpo da mensagem
-     */
     @Transactional
     public void criarEEnviarParaUsuario(User usuario, Chamado chamado,
                                         String titulo, String mensagem) {
@@ -73,21 +65,13 @@ public class NotificacaoService {
 
         NotificacaoResponseDTO dto = NotificacaoResponseDTO.from(notificacaoRepository.save(n));
 
-        // Entrega na fila privada do usuário: /user/{email}/queue/notificacoes
         messagingTemplate.convertAndSendToUser(
-                usuario.getEmail(),          // principal name (igual ao JWT sub)
+                usuario.getEmail(),
                 "/queue/notificacoes",
                 dto
         );
     }
 
-    /**
-     * Cria uma notificação geral (broadcast) e publica no tópico público.
-     *
-     * @param chamado   chamado relacionado (pode ser null)
-     * @param titulo    título
-     * @param mensagem  corpo
-     */
     @Transactional
     public void criarEEnviarGeral(Chamado chamado, String titulo, String mensagem) {
         Notificacao n = new Notificacao();
@@ -98,7 +82,28 @@ public class NotificacaoService {
 
         NotificacaoResponseDTO dto = NotificacaoResponseDTO.from(notificacaoRepository.save(n));
 
-        // Broadcast para todos os conectados: /topic/notificacoes
         messagingTemplate.convertAndSend("/topic/notificacoes", dto);
+    }
+
+    @Transactional
+    public void notificarNovaMensagemChat(User destinatario, CanalComunicacao canal, MensagemComunicacao mensagem) {
+        Notificacao notificacao = new Notificacao();
+        // Corrigido: Passando a entidade User completa em vez do ID numérico
+        notificacao.setUsuario(destinatario);
+        notificacao.setGeral(false);
+        notificacao.setTitulo("Nova mensagem" + (canal.getNome() != null ? " em " + canal.getNome() : ""));
+        notificacao.setMensagem(mensagem.getRemetente().getNome() + ": " + resumir(mensagem.getConteudo()));
+        notificacao.setLida(false);
+        notificacaoRepository.save(notificacao);
+
+        messagingTemplate.convertAndSendToUser(
+                destinatario.getId().toString(),
+                "/notificacoes",
+                notificacao
+        );
+    }
+
+    private String resumir(String texto) {
+        return texto.length() > 60 ? texto.substring(0, 60) + "..." : texto;
     }
 }

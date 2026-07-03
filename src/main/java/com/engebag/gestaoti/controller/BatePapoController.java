@@ -1,66 +1,86 @@
 package com.engebag.gestaoti.controller;
 
-import com.engebag.gestaoti.dto.MensagemEnvioDTO;
-import com.engebag.gestaoti.dto.MensagemRetornoDTO;
-import com.engebag.gestaoti.dto.UsuarioResumoDTO;
 import com.engebag.gestaoti.model.CanalComunicacao;
 import com.engebag.gestaoti.model.MensagemComunicacao;
+import com.engebag.gestaoti.model.MensagemLeitura;
 import com.engebag.gestaoti.model.User;
-import com.engebag.gestaoti.repository.CanalComunicacaoRepository;
+import com.engebag.gestaoti.dto.MensagemDigitandoDTO;
 import com.engebag.gestaoti.repository.MensagemComunicacaoRepository;
-import com.engebag.gestaoti.repository.UserRepository;
+import com.engebag.gestaoti.repository.MensagemLeituraRepository;
+import com.engebag.gestaoti.service.SessaoAtivaService;
+import com.engebag.gestaoti.service.NotificacaoService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
-import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Map;
 
 @Controller
 public class BatePapoController {
 
+    @Autowired 
+    private SessaoAtivaService sessaoAtivaService;
+    
+    @Autowired 
+    private NotificacaoService notificacaoService;
+    
+    @Autowired 
+    private MensagemLeituraRepository mensagemLeituraRepository;
+    
     @Autowired
-    private SimpMessagingTemplate messagingTemplate; // Responsável por enviar mensagens via WebSocket
-
+    private MensagemComunicacaoRepository mensagemRepository;
+    
     @Autowired
-    private MensagemComunicacaoRepository mensagemRepo;
+    private SimpMessagingTemplate messagingTemplate;
 
-    @Autowired
-    private CanalComunicacaoRepository canalRepo;
+    // Endpoint novo: cliente avisa que abriu/fechou uma conversa
+    @MessageMapping("/batepapo/abrirCanal")
+    public void abrirCanal(@Payload Map<String, Long> payload) {
+        sessaoAtivaService.abrirCanal(payload.get("usuarioId"), payload.get("canalId"));
+        marcarTodasComoLidas(payload.get("canalId"), payload.get("usuarioId"));
+    }
 
-    @Autowired
-    private UserRepository userRepo;
+    @MessageMapping("/batepapo/fecharCanal")
+    public void fecharCanal(@Payload Map<String, Long> payload) {
+        sessaoAtivaService.fecharCanal(payload.get("usuarioId"));
+    }
 
-    @MessageMapping("/batepapo/enviar") // O React enviará para /app/batepapo/enviar
-    @Transactional
-    public void processarMensagem(@Payload MensagemEnvioDTO dto) {
-        
-        // 1. Busca remetente e canal
-        User remetente = userRepo.findById(dto.getRemetenteId())
-                .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
-                
-        CanalComunicacao canal = canalRepo.findById(dto.getCanalId())
-                .orElseThrow(() -> new RuntimeException("Canal não encontrado"));
+    // Endpoint novo: "Fulano está digitando..."
+    @MessageMapping("/batepapo/digitando")
+    public void digitando(@Payload MensagemDigitandoDTO dto) {
+        messagingTemplate.convertAndSend("/topic/canal/" + dto.canalId() + "/digitando", dto);
+    }
 
-        // 2. Salva no banco de dados
-        MensagemComunicacao novaMensagem = new MensagemComunicacao();
-        novaMensagem.setCanal(canal);
-        novaMensagem.setRemetente(remetente);
-        novaMensagem.setConteudo(dto.getConteudo());
-        mensagemRepo.save(novaMensagem);
+    // Lógica para chamar dentro do seu enviarMensagem() principal existente
+    private void notificarParticipantes(CanalComunicacao canal, MensagemComunicacao mensagem, Long remetenteId) {
+        for (User participante : canal.getParticipantes()) {
+            if (participante.getId().equals(remetenteId)) continue;
 
-        // 3. Monta o DTO de retorno
-        UsuarioResumoDTO resumo = new UsuarioResumoDTO(remetente);
+            if (sessaoAtivaService.estaVisualizando(participante.getId(), canal.getId())) {
+                // Já está olhando a conversa -> marca como lida na hora, sem notificação
+                marcarComoLida(mensagem.getId(), participante.getId());
+            } else {
+                // Não está olhando -> gera notificação real
+                notificacaoService.notificarNovaMensagemChat(participante, canal, mensagem);
+            }
+        }
+    }
 
-        MensagemRetornoDTO retorno = new MensagemRetornoDTO();
-        retorno.setId(novaMensagem.getId());
-        retorno.setCanalId(canal.getId());
-        retorno.setConteudo(novaMensagem.getConteudo());
-        retorno.setEnviadoEm(novaMensagem.getEnviadoEm());
-        retorno.setRemetente(resumo);
+    private void marcarComoLida(Long mensajeId, Long usuarioId) {
+        if (!mensagemLeituraRepository.existsByMensagemIdAndUsuarioId(mensajeId, usuarioId)) {
+            MensagemLeitura leitura = new MensagemLeitura();
+            leitura.setMensagemId(mensajeId);
+            leitura.setUsuarioId(usuarioId);
+            mensagemLeituraRepository.save(leitura);
+        }
+    }
 
-        // 4. Dispara a mensagem instantaneamente para todos inscritos no canal
-        // O React estará escutando no tópico /topic/canal/{id}
-        messagingTemplate.convertAndSend("/topic/canal/" + canal.getId(), retorno);
+    private void marcarTodasComoLidas(Long canalId, Long usuarioId) {
+        var naoLidas = mensagemRepository.findByCanalIdAndRemetenteIdNot(canalId, usuarioId);
+        for (var msg : naoLidas) {
+            marcarComoLida(msg.getId(), usuarioId);
+        }
     }
 }

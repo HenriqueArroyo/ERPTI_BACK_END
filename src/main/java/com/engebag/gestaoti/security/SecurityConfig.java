@@ -63,6 +63,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/canais/criar").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/canais").authenticated()
                         
+                        // PROTEÇÃO DA API DO BATE-PAPO REST (Adicionado explicitamente)
+                        .requestMatchers("/api/bate-papo/**").authenticated()
+                        
                         // 3. ROTAS DE GESTÃO (Apenas ADMIN e TECNICO)
                         .requestMatchers(HttpMethod.POST, "/usuarios").hasAnyRole("ADMIN", "TECNICO")
                         .requestMatchers(HttpMethod.GET, "/usuarios").hasAnyRole("ADMIN", "TECNICO")
